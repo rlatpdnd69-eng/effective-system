@@ -1,0 +1,433 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>폐병원 : 좀비 연구소 탈출</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; user-select: none; }
+    body { background: #080808; color: #eee; font-family: 'Courier New', monospace; display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 100vh; overflow: hidden; }
+    #game-container { position: relative; width: 640px; height: 480px; background: #000; border: 3px solid #444; box-shadow: 0 0 20px rgba(255,0,0,0.3); overflow: hidden; }
+    canvas { display: block; width: 100%; height: 100%; background: #111; }
+    
+    /* UI Overlays */
+    #ui-layer { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; }
+    .hud-header { position: absolute; top: 10px; left: 10px; right: 10px; display: flex; justify-content: space-between; font-size: 14px; color: #0f0; text-shadow: 0 0 5px #0f0; }
+    
+    /* Dialogue Box */
+    #dialogue-box { position: absolute; bottom: 10px; left: 10px; right: 10px; height: 110px; background: rgba(0, 0, 0, 0.85); border: 2px solid #888; border-radius: 5px; padding: 10px; color: #fff; font-size: 14px; line-height: 1.4; display: none; pointer-events: auto; }
+    #dialogue-title { color: #ff3333; font-weight: bold; margin-bottom: 5px; }
+    
+    /* Modal Popups */
+    .modal { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); background: #111; border: 2px solid #ff3333; padding: 20px; border-radius: 8px; color: #fff; display: none; flex-direction: column; align-items: center; gap: 15px; z-index: 10; pointer-events: auto; width: 320px; text-align: center; }
+    .modal input[type="text"] { background: #222; border: 1px solid #555; color: #0f0; padding: 8px; font-size: 18px; text-align: center; width: 100%; letter-spacing: 4px; }
+    .modal button { background: #333; color: #fff; border: 1px solid #777; padding: 8px 15px; cursor: pointer; font-weight: bold; }
+    .modal button:hover { background: #555; }
+
+    /* Controls for Mobile */
+    #mobile-controls { position: absolute; bottom: 10px; left: 10px; right: 10px; display: none; justify-content: space-between; pointer-events: none; z-index: 5; }
+    .d-pad { display: grid; grid-template-columns: repeat(3, 40px); grid-template-rows: repeat(3, 40px); gap: 5px; pointer-events: auto; }
+    .btn-ctrl { background: rgba(255,255,255,0.2); border: 1px solid #aaa; color: #fff; border-radius: 5px; display: flex; align-items: center; justify-content: center; font-weight: bold; font-size: 18px; }
+    .btn-act { width: 70px; height: 70px; border-radius: 50%; background: rgba(255,0,0,0.4); border: 2px solid #ff5555; color: #fff; display: flex; align-items: center; justify-content: center; font-weight: bold; pointer-events: auto; align-self: flex-end; }
+  </style>
+</head>
+<body>
+
+<div id="game-container">
+  <canvas id="gameCanvas" width="640" height="480"></canvas>
+  
+  <div id="ui-layer">
+    <div class="hud-header">
+      <span id="zone-display">위치: 관문 1 - 병실</span>
+      <span id="inv-display">소지품: 없음</span>
+    </div>
+    
+    <div id="dialogue-box">
+      <div id="dialogue-title">시스템</div>
+      <div id="dialogue-text">게임이 시작되었습니다. 시체를 조사하세요.</div>
+    </div>
+  </div>
+
+  <!-- Keypad Modal -->
+  <div id="keypad-modal" class="modal">
+    <h3 id="modal-title">비밀번호 입력</h3>
+    <p id="modal-desc" style="font-size:12px; color:#aaa;">정답 코드를 입력하세요.</p>
+    <input type="text" id="modal-input" maxlength="10">
+    <div style="display:flex; gap:10px;">
+      <button onclick="submitModal()">확인</button>
+      <button onclick="closeModal()">취소</button>
+    </div>
+  </div>
+
+  <!-- Color Lock Modal -->
+  <div id="color-modal" class="modal">
+    <h3>보안실 색상 자물쇠</h3>
+    <p style="font-size:12px; color:#aaa;">순서대로 색상을 누르세요 (4자리)</p>
+    <div id="color-seq-display" style="font-size:20px; letter-spacing:5px; height:30px;">_ _ _ _</div>
+    <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px; width:100%;">
+      <button style="background:blue;" onclick="pressColor('🔵')">파랑 (1)</button>
+      <button style="background:green;" onclick="pressColor('🟢')">초록 (2)</button>
+      <button style="background:red;" onclick="pressColor('🔴')">빨강 (3)</button>
+      <button style="background:gold; color:#000;" onclick="pressColor('🟡')">노랑 (4)</button>
+    </div>
+    <button onclick="resetColor()" style="margin-top:10px; width:100%;">초기화</button>
+    <button onclick="closeModal()" style="width:100%;">취소</button>
+  </div>
+
+  <!-- Touch Controls -->
+  <div id="mobile-controls">
+    <div class="d-pad">
+      <div></div><div class="btn-ctrl" onclick="movePlayer(0,-1)">▲</div><div></div>
+      <div class="btn-ctrl" onclick="movePlayer(-1,0)">◄</div><div></div><div class="btn-ctrl" onclick="movePlayer(1,0)">►</div>
+      <div></div><div class="btn-ctrl" onclick="movePlayer(0,1)">▼</div><div></div>
+    </div>
+    <div class="btn-act" onclick="interact()">조사</div>
+  </div>
+</div>
+
+<script>
+  // Game Audio Engine (Web Audio API)
+  const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  function playBeep(freq = 440, type = 'sine', duration = 0.1) {
+    if (audioCtx.state === 'suspended') audioCtx.resume();
+    const osc = audioCtx.createOscillator();
+    const gain = audioCtx.createGain();
+    osc.type = type;
+    osc.frequency.value = freq;
+    gain.gain.setValueAtTime(0.1, audioCtx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + duration);
+    osc.connect(gain);
+    gain.connect(audioCtx.destination);
+    osc.start();
+    osc.stop(audioCtx.currentTime + duration);
+  }
+
+  // Canvas Setup
+  const canvas = document.getElementById('gameCanvas');
+  const ctx = canvas.getContext('2d');
+  
+  // Game State
+  let zone = 1; // 1: 병실, 2: 201호, 3: 2층복도, 4: 1층로비/연구실
+  let player = { x: 320, y: 350, speed: 4, size: 20 };
+  let inventory = [];
+  let isZombieAwake = false;
+  let activeModalAction = null;
+  let colorSequence = [];
+
+  // Zone Configurations
+  const zoneNames = {
+    1: "관문 1 - 음산한 병실",
+    2: "관문 2 - 201호 입원실",
+    3: "관문 3 - 2층 병원 복도",
+    4: "관문 4 - 1층 로비 & 연구실"
+  };
+
+  // Input Handling
+  const keys = {};
+  window.addEventListener('keydown', e => {
+    keys[e.key] = true;
+    if (e.key === ' ' || e.key === 'Enter') interact();
+  });
+  window.addEventListener('keyup', e => keys[e.key] = false);
+
+  function movePlayer(dx, dy) {
+    player.x += dx * 15;
+    player.y += dy * 15;
+    checkBounds();
+  }
+
+  function checkBounds() {
+    player.x = Math.max(30, Math.min(610, player.x));
+    player.y = Math.max(50, Math.min(450, player.y));
+  }
+
+  function updateHUD() {
+    document.getElementById('zone-display').innerText = `위치: ${zoneNames[zone]}`;
+    document.getElementById('inv-display').innerText = `소지품: ${inventory.length ? inventory.join(', ') : '없음'}`;
+  }
+
+  function showText(text, title = "안내") {
+    const box = document.getElementById('dialogue-box');
+    document.getElementById('dialogue-title').innerText = title;
+    document.getElementById('dialogue-text').innerText = text;
+    box.style.display = 'block';
+    playBeep(600, 'square', 0.05);
+  }
+
+  function openKeypad(title, desc, action) {
+    activeModalAction = action;
+    document.getElementById('modal-title').innerText = title;
+    document.getElementById('modal-desc').innerText = desc;
+    document.getElementById('modal-input').value = '';
+    document.getElementById('keypad-modal').style.display = 'flex';
+  }
+
+  function closeModal() {
+    document.getElementById('keypad-modal').style.display = 'none';
+    document.getElementById('color-modal').style.display = 'none';
+  }
+
+  function submitModal() {
+    const val = document.getElementById('modal-input').value.trim();
+    if (activeModalAction) activeModalAction(val);
+    closeModal();
+  }
+
+  // Zone Interaction Logic
+  function interact() {
+    // Distance helper
+    const dist = (x, y) => Math.hypot(player.x - x, player.y - y);
+
+    if (zone === 1) {
+      // Bed/Body Interaction
+      if (dist(320, 180) < 60) {
+        if (!isZombieAwake) {
+          isZombieAwake = true;
+          showText("시체를 건드리자 기괴한 소리와 함께 시체가 일어났습니다! 시체 밑에서 [병실 열쇠]를 구했습니다.", "⚠️ 경고");
+          inventory.push("병실 열쇠");
+          updateHUD();
+          playBeep(150, 'sawtooth', 0.5);
+        } else {
+          showText("이미 열쇠를 획득했습니다.");
+        }
+      }
+      // Door
+      else if (dist(320, 60) < 50) {
+        if (inventory.includes("병실 열쇠")) {
+          zone = 2;
+          player.x = 320; player.y = 400;
+          showText("201호 입원실로 이동했습니다.", "시스템");
+          updateHUD();
+        } else {
+          showText("문이 잠겨 있습니다. 열쇠를 찾아야 합니다.");
+        }
+      }
+    } else if (zone === 2) {
+      // Lockers
+      if (dist(150, 120) < 50) {
+        if (!inventory.includes("수술용 가위")) {
+          inventory.push("수술용 가위", "종이(🔴3)", "201호 열쇠");
+          showText("관물대에서 [수술용 가위], [종이(🔴 3)], [201호 열쇠]를 발견했습니다!", "아이템 획득");
+          updateHUD();
+        } else {
+          showText("관물대가 비어있습니다.");
+        }
+      }
+      // Door
+      else if (dist(320, 60) < 50) {
+        if (inventory.includes("201호 열쇠")) {
+          zone = 3;
+          player.x = 100; player.y = 240;
+          showText("2층 복도로 나왔습니다. 좀비 소리가 울려퍼집니다!", "공포");
+          playBeep(100, 'sawtooth', 0.8);
+          updateHUD();
+        } else {
+          showText("201호 문이 자물쇠로 잠겨 있습니다.");
+        }
+      }
+    } else if (zone === 3) {
+      // 204 Door (Direction Lock)
+      if (dist(300, 100) < 50) {
+        openKeypad("204호 동서남북 자물쇠", "화재대피도 힌트 (예: 동남서북)", (val) => {
+          if (val === "동남서북") {
+            showText("204호 자물쇠가 열렸습니다! 내부로 들어가 [종이(🟢 2)]를 얻고 철장을 지나 식당/원장실 복도로 진입합니다.");
+            inventory.push("종이(🟢2)");
+            player.x = 500; player.y = 240;
+            updateHUD();
+          } else {
+            showText("자물쇠가 열리지 않습니다.", "오답");
+          }
+        });
+      }
+      // Restaurant & Director Room Search
+      else if (dist(500, 150) < 60) {
+        if (!inventory.includes("종이(🔵1)")) {
+          inventory.push("종이(🔵1)", "종이(🟡4)");
+          showText("식당과 원장실을 수색하여 [비밀번호 힌트: 46 / 39] 및 [종이(🔵 1)], [종이(🟡 4)]를 찾아냈습니다!");
+          updateHUD();
+        } else {
+          showText("이미 모든 힌트를 수색했습니다.");
+        }
+      }
+      // Exit Padlock (4639)
+      else if (dist(580, 240) < 50) {
+        openKeypad("2층 출구 자물쇠", "비밀번호 4자리를 입력하세요.", (val) => {
+          if (val === "4639") {
+            zone = 4;
+            player.x = 320; player.y = 400;
+            showText("자물쇠가 풀렸습니다! 계단을 통해 1층 로비로 내려왔습니다.", "탈출 성공");
+            updateHUD();
+          } else {
+            showText("비밀번호가 틀렸습니다.", "오답");
+          }
+        });
+      }
+    } else if (zone === 4) {
+      // Security Room (Color Lock)
+      if (dist(150, 350) < 50) {
+        document.getElementById('color-modal').style.display = 'flex';
+      }
+      // CCTV Interaction (ZOMBIE)
+      else if (dist(150, 150) < 50) {
+        if (inventory.includes("보안실 열림")) {
+          showText("CCTV 화면 6개에 각각 Z - O - M - B - I - E 문자가 켜졌습니다!", "힌트");
+        } else {
+          showText("보안실 안으로 들어가야 전원을 켤 수 있습니다.");
+        }
+      }
+      // Lab Door (ZOMBIE)
+      else if (dist(450, 150) < 50) {
+        openKeypad("연구실 영문 키패드", "알파벳 비밀번호를 입력하세요.", (val) => {
+          if (val.toUpperCase() === "ZOMBIE") {
+            showText("연구실 문이 열렸습니다! 마지막 장치들을 찾으세요.", "성공");
+            inventory.push("연구실 해금");
+            updateHUD();
+          } else {
+            showText("비밀번호가 올바르지 않습니다.");
+          }
+        });
+      }
+      // Computer (2396) & Scalpel
+      else if (dist(400, 300) < 50) {
+        if (!inventory.includes("메스")) {
+          openKeypad("연구실 컴퓨터", "컴퓨터 비밀번호 4자리", (val) => {
+            if (val === "2396") {
+              inventory.push("메스");
+              showText("컴퓨터 틈에서 열쇠가 나와 상자를 열고 [메스]를 구했습니다!", "아이템 획득");
+              updateHUD();
+            } else {
+              showText("비밀번호 오답 (힌트: 71 4□1 28 □5...)");
+            }
+          });
+        }
+      }
+      // Desk (*666#) & Stethoscope (Secret Room)
+      else if (dist(550, 350) < 50) {
+        if (!inventory.includes("청진기")) {
+          openKeypad("사무실 전화기", "다이어리 힌트 번호 입력", (val) => {
+            if (val === "*666#") {
+              inventory.push("청진기");
+              showText("책상이 아래로 내려가며 비밀 실험실이 나타났습니다! 시체들 사이에서 [청진기]를 습득했습니다.", "비밀 공간");
+              updateHUD();
+            } else {
+              showText("전화기 연결 음이 울리지 않습니다.");
+            }
+          });
+        }
+      }
+      // Final Escape
+      else if (dist(320, 60) < 50) {
+        if (inventory.includes("수술용 가위") && inventory.includes("메스") && inventory.includes("청진기")) {
+          alert("🎉 탈출 성공! \n수술용 가위, 메스, 청진기를 출구 장치에 올리고 폐병원을 무사히 탈출했습니다!\n즉시 경찰서로 달려가 좀비 인체실험 연구소의 실체를 폭로합니다!");
+          location.reload();
+        } else {
+          showText("최종 탈출을 위해서는 3개의 의류 도구 [수술용 가위, 메스, 청진기]가 필요합니다.");
+        }
+      }
+    }
+  }
+
+  // Color Lock Logic
+  function pressColor(color) {
+    if (colorSequence.length < 4) {
+      colorSequence.push(color);
+      document.getElementById('color-seq-display').innerText = colorSequence.join(' ');
+      if (colorSequence.length === 4) {
+        if (colorSequence.join('') === "🔵🟢🔴🟡") {
+          showText("보안실 색상 자물쇠가 해제되었습니다!", "성공");
+          inventory.push("보안실 열림");
+          updateHUD();
+          closeModal();
+        } else {
+          showText("색상 순서가 틀렸습니다.", "오답");
+          resetColor();
+        }
+      }
+    }
+  }
+  function resetColor() {
+    colorSequence = [];
+    document.getElementById('color-seq-display').innerText = "_ _ _ _";
+  }
+
+  // Game Loop
+  function update() {
+    if (keys['ArrowUp'] || keys['w']) movePlayer(0, -0.2);
+    if (keys['ArrowDown'] || keys['s']) movePlayer(0, 0.2);
+    if (keys['ArrowLeft'] || keys['a']) movePlayer(-0.2, 0);
+    if (keys['ArrowRight'] || keys['d']) movePlayer(0.2, 0);
+  }
+
+  function draw() {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+    // Draw Map & Objects according to Zone
+    if (zone === 1) {
+      // Room
+      ctx.fillStyle = '#1c241e'; ctx.fillRect(50, 50, 540, 380);
+      // Bed
+      ctx.fillStyle = '#666'; ctx.fillRect(280, 140, 80, 100);
+      ctx.fillStyle = isZombieAwake ? '#0f0' : '#a00';
+      ctx.fillRect(300, 160, 40, 60); // Zombie / Body
+      // Door
+      ctx.fillStyle = '#855'; ctx.fillRect(290, 40, 60, 15);
+    } else if (zone === 2) {
+      ctx.fillStyle = '#222'; ctx.fillRect(50, 50, 540, 380);
+      // Lockers
+      ctx.fillStyle = '#445'; ctx.fillRect(100, 80, 100, 40);
+      // Door
+      ctx.fillStyle = '#855'; ctx.fillRect(290, 40, 60, 15);
+    } else if (zone === 3) {
+      ctx.fillStyle = '#1a1a24'; ctx.fillRect(50, 50, 540, 380);
+      // 204 Door
+      ctx.fillStyle = '#944'; ctx.fillRect(280, 80, 50, 15);
+      // Restaurant
+      ctx.fillStyle = '#343'; ctx.fillRect(450, 100, 100, 80);
+      // Exit Door
+      ctx.fillStyle = '#0a0'; ctx.fillRect(580, 210, 15, 60);
+    } else if (zone === 4) {
+      ctx.fillStyle = '#111'; ctx.fillRect(50, 50, 540, 380);
+      // Security Room
+      ctx.fillStyle = '#224'; ctx.fillRect(80, 300, 100, 100);
+      // CCTV
+      ctx.fillStyle = '#448'; ctx.fillRect(80, 100, 80, 60);
+      // Lab Door
+      ctx.fillStyle = '#a44'; ctx.fillRect(420, 100, 60, 15);
+      // Computer
+      ctx.fillStyle = '#488'; ctx.fillRect(380, 280, 50, 40);
+      // Desk
+      ctx.fillStyle = '#844'; ctx.fillRect(520, 320, 50, 50);
+      // Final Exit
+      ctx.fillStyle = '#0f0'; ctx.fillRect(290, 40, 60, 15);
+    }
+
+    // Draw Player
+    ctx.fillStyle = '#00ffff';
+    ctx.beginPath();
+    ctx.arc(player.x, player.y, player.size / 2, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Spotlight Dark Effect
+    const gradient = ctx.createRadialGradient(player.x, player.y, 30, player.x, player.y, 180);
+    gradient.addColorStop(0, 'rgba(0,0,0,0)');
+    gradient.addColorStop(1, 'rgba(0,0,0,0.92)');
+    ctx.fillStyle = gradient;
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+  }
+
+  function loop() {
+    update();
+    draw();
+    requestAnimationFrame(loop);
+  }
+
+  // Detect Mobile
+  if ('ontouchstart' in window) {
+    document.getElementById('mobile-controls').style.display = 'flex';
+  }
+
+  updateHUD();
+  loop();
+</script>
+</body>
+</html>
